@@ -27,10 +27,11 @@ class UdpContext;
 #define SSDP_HTTP_PORT				80
 
 typedef enum {
-	NONE,
+	RESPONSE,
 	SEARCH,
-	NOTIFY
-} ssdp_method_t;
+	NOTIFY_ALIVE,
+	NOTIFY_BB
+} ssdp_message_type_t;
 
 
 struct SSDPTimer;
@@ -115,13 +116,14 @@ protected:
 	void addHeader(const char* header, const char* value);
 	void addHeader(String& header, String& value) { addHeader(header.c_str(), value.c_str()); };
 	virtual void on_response() {};
-	virtual void on_notity() {};
+	virtual void on_notify_alive() {};
+	virtual void on_notify_bb() {};
 
 private:
-	void _send(ssdp_method_t method, const char* st_on_nt_val, const char* usn);
+	void _send(ssdp_message_type_t msg_type, const char* st_on_nt_val, const char* usn);
 	void _notify(const char* nt_header, const char* usn_header);
-	void _advertise_about_target(ssdp_method_t method, int16_t target);
-	void _advertise_about_all(ssdp_method_t method);
+	void _advertise_about_target(ssdp_message_type_t msg_type, int16_t target);
+	void _advertise_about_all(ssdp_message_type_t msg_type);
 	void _get_target_usn(int16_t target, const char* st_or_nt_val, char* buffer, int16_t buffer_size);
 	void _get_target_st_or_nt(int16_t target, char* buffer, int16_t buffer_size);
 	void _update();

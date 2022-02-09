@@ -39,6 +39,11 @@ static const char _ssdp_notify_template[] PROGMEM =
 "HOST: 239.255.255.250:1900\r\n"
 "NTS: ssdp:alive\r\n";
 
+static const char _ssdp_notify_bb_template[] PROGMEM =
+"NOTIFY * HTTP/1.1\r\n"
+"HOST: 239.255.255.250:1900\r\n"
+"NTS: ssdp:byebye\r\n";
+
 static const char _ssdp_packet_template[] PROGMEM =
 "%s" // _ssdp_response_template / _ssdp_notify_template
 "CACHE-CONTROL: max-age=%u\r\n" // _interval
@@ -175,6 +180,9 @@ void SSDPClass::end() {
 	#ifdef DEBUG_SSDP
 		DEBUG_SSDP.printf_P(PSTR("SSDP end ... "));
 	#endif
+
+	_advertise_about_all(NOTIFY_BB);
+
 	// undo all initializations done in begin(), in reverse order
 	_stopTimer();
 
@@ -196,12 +204,27 @@ void SSDPClass::end() {
 		DEBUG_SSDP.printf_P(PSTR("ok\n"));
 	#endif
 }
-void SSDPClass::_send(ssdp_method_t method, const char* st_on_nt_val, const char* usn) {
+void SSDPClass::_send(ssdp_message_type_t msg_type, const char* st_on_nt_val, const char* usn) {
 	char buffer[1460];
 	IPAddress ip = WiFi.localIP();
 
 	char valueBuffer[strlen_P(_ssdp_notify_template) + 1];
-	strcpy_P(valueBuffer, (method == NONE) ? _ssdp_response_template : _ssdp_notify_template);
+	switch (msg_type) {
+	case RESPONSE:
+		strcpy_P(valueBuffer, _ssdp_response_template);
+		break;
+	case NOTIFY_ALIVE:
+		strcpy_P(valueBuffer, _ssdp_notify_template);
+		break;
+	case NOTIFY_BB:
+		strcpy_P(valueBuffer, _ssdp_notify_bb_template);
+		break;
+	default:
+		#ifdef DEBUG_SSDP
+				DEBUG_SSDP.print("SSDP ERROR: Incorrect type or method for sending message.");
+		#endif
+		return;
+	}
 
 	int len = snprintf_P(buffer, sizeof(buffer),
 		_ssdp_packet_template,
@@ -210,7 +233,7 @@ void SSDPClass::_send(ssdp_method_t method, const char* st_on_nt_val, const char
 		_modelName,
 		_modelNumber,
 		usn,
-		(method == NONE) ? "ST" : "NT",
+		(msg_type == RESPONSE) ? "ST" : "NT",
 		st_on_nt_val,
 		ip.toString().c_str(), _port, _schemaURL,
 		_bootId,
@@ -222,7 +245,7 @@ void SSDPClass::_send(ssdp_method_t method, const char* st_on_nt_val, const char
 
 	IPAddress remoteAddr;
 	uint16_t remotePort;
-	if (method == NONE) {
+	if (msg_type == RESPONSE) {
 		on_response();
 		remoteAddr = _respondToAddr;
 		remotePort = _respondToPort;
@@ -230,7 +253,10 @@ void SSDPClass::_send(ssdp_method_t method, const char* st_on_nt_val, const char
 				DEBUG_SSDP.print("Sending Response to ");
 		#endif
 	} else {
-		on_notity();
+		if (msg_type == NOTIFY_ALIVE)
+			on_notify_alive();
+		else if (msg_type == NOTIFY_BB)
+			on_notify_bb();
 		remoteAddr = IPAddress(SSDP_MULTICAST_ADDR);
 		remotePort = SSDP_PORT;
 		#ifdef DEBUG_SSDP
@@ -251,24 +277,24 @@ void SSDPClass::_send(ssdp_method_t method, const char* st_on_nt_val, const char
 }
 
 void SSDPClass::_notify(const char* nt_header, const char* usn_header) {
-	_send(NOTIFY, nt_header, usn_header);
+	_send(NOTIFY_ALIVE, nt_header, usn_header);
 }
 
-void SSDPClass::_advertise_about_target(ssdp_method_t method, int16_t target) {
+void SSDPClass::_advertise_about_target(ssdp_message_type_t msg_type, int16_t target) {
 	char stnt_buff[SSDP_ST_VAL_SIZE] = { 0 };
 	_get_target_st_or_nt(target, stnt_buff, sizeof(stnt_buff));
 	char usn_buff[sizeof(stnt_buff) + 12] = { 0 };
 	_get_target_usn(target, stnt_buff, usn_buff, sizeof(usn_buff));
-	_send(method, stnt_buff, usn_buff);
+	_send(msg_type, stnt_buff, usn_buff);
 }
 
-void SSDPClass::_advertise_about_all(ssdp_method_t method) {
-	_advertise_about_target(method, rootdevice);
-	_advertise_about_target(method, uuid);
-	_advertise_about_target(method, deviceType);
+void SSDPClass::_advertise_about_all(ssdp_message_type_t msg_type) {
+	_advertise_about_target(msg_type, rootdevice);
+	_advertise_about_target(msg_type, uuid);
+	_advertise_about_target(msg_type, deviceType);
 
 	for (int16_t i = 0; i < _servicesNum; i++)
-		_advertise_about_target(method, i);
+		_advertise_about_target(msg_type, i);
 }
 
 void SSDPClass::_get_target_usn(int16_t target, const char* st_or_nt_val, char* buffer, int16_t buffer_size) {
@@ -321,8 +347,6 @@ void SSDPClass::schema(Print& client) const {
 
 void SSDPClass::_update() {
 	if (_advertisement_target == none && _server->next()) {
-		ssdp_method_t method = NONE;
-
 		_respondToAddr = _server->getRemoteAddress();
 		_respondToPort = _server->getRemotePort();
 
@@ -347,10 +371,10 @@ void SSDPClass::_update() {
 			switch (state) {
 			case METHOD:
 				if (c == ' ') {
-					if (strcmp(buffer, "M-SEARCH") == 0) method = SEARCH;
-
-					if (method == NONE) state = ABORT;
-					else state = URI;
+					if (strcmp(buffer, "M-SEARCH") == 0) 
+						state = URI;
+					else
+						state = ABORT;
 					cursor = 0;
 
 				} else if (cursor < SSDP_METHOD_SIZE - 1) {
@@ -457,15 +481,15 @@ void SSDPClass::_update() {
 
 	if (_advertisement_target != none && (millis() - _process_time) > _delay) {
 		if (_advertisement_target == all) {
-			_advertise_about_all(NONE);
+			_advertise_about_all(RESPONSE);
 		} else {
-			_advertise_about_target(NONE, _advertisement_target);
+			_advertise_about_target(RESPONSE, _advertisement_target);
 		}
 		_delay = 0;
 		_advertisement_target = none;
 	} else if (_notify_time == 0 || (millis() - _notify_time) > (_interval * 1000L)) {
 		_notify_time = millis();
-		_advertise_about_all(NOTIFY);
+		_advertise_about_all(NOTIFY_ALIVE);
 	}
 
 	if (_advertisement_target != none) {
@@ -549,16 +573,6 @@ void SSDPClass::setServiceTypes(SSDPServiceType types[], uint8_t services_num) {
 	_servicesNum = services_num;
 }
 
-/* void SSDPClass::setServiceTypes(const char** service_types, uint8_t services_num) {
-	_deleteServiceTypes();
-	_serviceTypes = new char* [services_num];
-	for (int i = 0; i < services_num; i++) {
-		_serviceTypes[i] = new char[strlen(service_types[i]) + 1];
-		strlcpy(_serviceTypes[i], service_types[i], strlen(service_types[i]) + 1);
-	}
-	this->_servicesNum = services_num;
-}*/
-
 void SSDPClass::setTTL(const uint8_t ttl) {
 	_ttl = ttl;
 }
@@ -577,8 +591,10 @@ void SSDPClass::_deleteServiceTypes() {
 		return;
 
 	for (int i = 0; i < _servicesNum; i++)
-		if (_serviceTypes[i])
+		if (_serviceTypes[i]) {
+			_advertise_about_target(NOTIFY_BB, i);
 			delete _serviceTypes[i];
+		}
 	delete _serviceTypes;
 }
 
