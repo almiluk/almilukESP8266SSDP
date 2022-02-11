@@ -26,13 +26,6 @@ class UdpContext;
 #define SSDP_MULTICAST_TTL			5
 #define SSDP_HTTP_PORT				80
 
-typedef enum {
-	RESPONSE,
-	SEARCH,
-	NOTIFY_ALIVE,
-	NOTIFY_BB
-} ssdp_message_type_t;
-
 
 struct SSDPTimer;
 
@@ -108,6 +101,14 @@ public:
 	void setTTL(uint8_t ttl);
 	void setInterval(uint32_t interval);
 
+	/* If true, SSDP will work automatically without any calls in loop().
+	* Else you must call loop method of this class regularly (in loop function).
+	* It is false by default.
+	*/
+	void setAutorun(bool flag);
+
+	void loop();
+
 protected:
 	// if >= 0, it is index of service in _serviceTypes array
 	enum advertisement_target_t { none = -5, uuid, all, deviceType, rootdevice };
@@ -120,6 +121,13 @@ protected:
 	virtual void on_notify_bb() {};
 
 private:
+	typedef enum {
+		RESPONSE,
+		SEARCH,
+		NOTIFY_ALIVE,
+		NOTIFY_BB
+	} ssdp_message_type_t;
+
 	void _send(ssdp_message_type_t msg_type, const char* st_on_nt_val, const char* usn);
 	void _notify(const char* nt_header, const char* usn_header);
 	void _advertise_about_target(ssdp_message_type_t msg_type, int16_t target);
@@ -137,6 +145,7 @@ private:
 	uint16_t _port = SSDP_HTTP_PORT;
 	uint8_t _ttl = SSDP_MULTICAST_TTL;
 	uint32_t _interval = SSDP_INTERVAL_SECONDS;
+	bool _auto_mode = false;
 
 	IPAddress _respondToAddr;
 	uint16_t  _respondToPort = 0;

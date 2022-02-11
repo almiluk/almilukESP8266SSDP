@@ -581,8 +581,20 @@ void SSDPClass::setInterval(uint32_t interval) {
 	_interval = interval;
 }
 
+void SSDPClass::setAutorun(bool flag) {
+	_auto_mode = flag;
+}
+
+void SSDPClass::loop() {
+	if (_server)
+		_update();
+}
+
 void SSDPClass::_onTimerStatic(SSDPClass* self) {
-	self->_update();
+	if (self->_auto_mode)
+		self->_update();
+	else
+		self->_stopTimer();
 }
 
 void SSDPClass::_deleteServiceTypes() {
