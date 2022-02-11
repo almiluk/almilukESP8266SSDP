@@ -79,7 +79,8 @@ void loop() {
 		delay(10000);
 		g_ssdp.end();
 		g_ssdp.response_cnt++;
-	}
+	} 
+	g_ssdp.loop();
 	g_webServer.handleClient();
 	delay(16);
 }
