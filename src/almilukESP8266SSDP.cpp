@@ -105,7 +105,7 @@ struct SSDPTimer {
 };
 
 SSDPClass::SSDPClass()
-	: _respondToAddr(0, 0, 0, 0)
+	: _addrForResponse(0, 0, 0, 0)
 {
 	_uuid[0] = '\0';
 	_modelNumber[0] = '\0';
@@ -130,6 +130,7 @@ SSDPClass::~SSDPClass() {
 bool SSDPClass::begin() {
 	end();
 	
+	// Generate uuid if it isn't set
 	if (strcmp(_uuid, "") == 0) {
 		uint32_t chipId = ESP.getChipId();
 		sprintf_P(_uuid, PSTR("38323636-4558-4dda-9188-cda0e6%02x%02x%02x"),
@@ -142,15 +143,17 @@ bool SSDPClass::begin() {
 		DEBUG_SSDP.printf("SSDP UUID: %s\n", (char*)_uuid);
 	#endif
 
+	// Configurate udp server
+
 	assert(NULL == _server);
 
 	_server = new UdpContext;
 	_server->ref();
 
-	IPAddress local = WiFi.localIP();
-	IPAddress mcast(SSDP_MULTICAST_ADDR);
+	IPAddress local_addr = WiFi.localIP();
+	IPAddress mcast_addr(SSDP_MULTICAST_ADDR);
 
-	if (igmp_joingroup(local, mcast) != ERR_OK) {
+	if (igmp_joingroup(local_addr, mcast_addr) != ERR_OK) {
 	#ifdef DEBUG_SSDP
 			DEBUG_SSDP.printf_P(PSTR("SSDP failed to join igmp group\n"));
 	#endif
@@ -161,10 +164,10 @@ bool SSDPClass::begin() {
 		return false;
 	}
 
-	_server->setMulticastInterface(local);
+	_server->setMulticastInterface(local_addr);
 	_server->setMulticastTTL(_ttl);
 	_server->onRx(std::bind(&SSDPClass::_update, this));
-	if (!_server->connect(mcast, SSDP_PORT)) {
+	if (!_server->connect(mcast_addr, SSDP_PORT)) {
 		return false;
 	}
 
@@ -181,17 +184,17 @@ void SSDPClass::end() {
 		DEBUG_SSDP.printf_P(PSTR("SSDP end ... "));
 	#endif
 
-	_advertise_about_all(NOTIFY_BB);
+	_advertiseAll(NOTIFY_BB);
 
 	// undo all initializations done in begin(), in reverse order
 	_stopTimer();
 
 	_server->disconnect();
 
-	IPAddress local = WiFi.localIP();
-	IPAddress mcast(SSDP_MULTICAST_ADDR);
+	IPAddress local_addr = WiFi.localIP();
+	IPAddress mcast_addr(SSDP_MULTICAST_ADDR);
 
-	if (igmp_leavegroup(local, mcast) != ERR_OK) {
+	if (igmp_leavegroup(local_addr, mcast_addr) != ERR_OK) {
 	#ifdef DEBUG_SSDP
 			DEBUG_SSDP.printf_P(PSTR("SSDP failed to leave igmp group\n"));
 	#endif
@@ -204,7 +207,7 @@ void SSDPClass::end() {
 		DEBUG_SSDP.printf_P(PSTR("ok\n"));
 	#endif
 }
-void SSDPClass::_send(ssdp_message_type_t msg_type, const char* st_on_nt_val, const char* usn) {
+void SSDPClass::_sendSSDPMessage(MessageType msg_type, const char* st_on_nt_val, const char* usn) {
 	char buffer[1460];
 	IPAddress ip = WiFi.localIP();
 
@@ -247,8 +250,8 @@ void SSDPClass::_send(ssdp_message_type_t msg_type, const char* st_on_nt_val, co
 	uint16_t remotePort;
 	if (msg_type == RESPONSE) {
 		on_response();
-		remoteAddr = _respondToAddr;
-		remotePort = _respondToPort;
+		remoteAddr = _addrForResponse;
+		remotePort = _portForResponse;
 		#ifdef DEBUG_SSDP
 				DEBUG_SSDP.print("Sending Response to ");
 		#endif
@@ -276,51 +279,51 @@ void SSDPClass::_send(ssdp_message_type_t msg_type, const char* st_on_nt_val, co
 	#endif
 }
 
-void SSDPClass::_notify(const char* nt_header, const char* usn_header) {
-	_send(NOTIFY_ALIVE, nt_header, usn_header);
+void SSDPClass::_sendNotificationMessage(const char* nt_header, const char* usn_header) {
+	_sendSSDPMessage(NOTIFY_ALIVE, nt_header, usn_header);
 }
 
-void SSDPClass::_advertise_about_target(ssdp_message_type_t msg_type, int16_t target) {
+void SSDPClass::_advertiseTarget(MessageType msg_type, int16_t target) {
 	char stnt_buff[SSDP_ST_VAL_SIZE] = { 0 };
-	_get_target_st_or_nt(target, stnt_buff, sizeof(stnt_buff));
+	_getTargetStOrNtHeader(target, stnt_buff, sizeof(stnt_buff));
 	char usn_buff[sizeof(stnt_buff) + 12] = { 0 };
-	_get_target_usn(target, stnt_buff, usn_buff, sizeof(usn_buff));
-	_send(msg_type, stnt_buff, usn_buff);
+	_getTargetUsnHeader(target, stnt_buff, usn_buff, sizeof(usn_buff));
+	_sendSSDPMessage(msg_type, stnt_buff, usn_buff);
 }
 
-void SSDPClass::_advertise_about_all(ssdp_message_type_t msg_type) {
-	_advertise_about_target(msg_type, rootdevice);
-	_advertise_about_target(msg_type, uuid);
-	_advertise_about_target(msg_type, deviceType);
+void SSDPClass::_advertiseAll(MessageType msg_type) {
+	_advertiseTarget(msg_type, rootdevice);
+	_advertiseTarget(msg_type, uuid);
+	_advertiseTarget(msg_type, deviceType);
 
 	for (int16_t i = 0; i < _servicesNum; i++)
-		_advertise_about_target(msg_type, i);
+		_advertiseTarget(msg_type, i);
 }
 
-void SSDPClass::_get_target_usn(int16_t target, const char* st_or_nt_val, char* buffer, int16_t buffer_size) {
+void SSDPClass::_getTargetUsnHeader(int16_t target, const char* st_or_nt_val, char* buffer, int16_t buffer_size) {
 	buffer[0] = '\0';
 	if (target == uuid)
 		strlcpy(buffer, st_or_nt_val, buffer_size);
 	else
-		snprintf_P(buffer, buffer_size, "uuid:%s::%s", _uuid, st_or_nt_val);
+		snprintf(buffer, buffer_size, "uuid:%s::%s", _uuid, st_or_nt_val);
 }
 
-void SSDPClass::_get_target_st_or_nt(int16_t target, char buffer[], int16_t buffer_size) {
+void SSDPClass::_getTargetStOrNtHeader(int16_t target, char buffer[], int16_t buffer_size) {
 	buffer[0] = '\0';
 	switch (target)
 	{
 	case uuid:
-		snprintf_P(buffer, buffer_size, "uuid:%s", _uuid);
+		snprintf(buffer, buffer_size, "uuid:%s", _uuid);
 		break;
 	case rootdevice:
 		strlcpy(buffer, "upnp:rootdevice", buffer_size);
 		break;
 	case deviceType:
-		snprintf_P(buffer, buffer_size, "urn:%s", _deviceType);
+		snprintf(buffer, buffer_size, "urn:%s", _deviceType);
 		break;
 	default:
 		if (target >= 0 && target < _servicesNum)
-			snprintf_P(buffer, buffer_size, "urn:%s", _serviceTypes[target]);
+			snprintf(buffer, buffer_size, "urn:%s", _serviceTypes[target]);
 		break;
 	}
 }
@@ -347,8 +350,8 @@ void SSDPClass::schema(Print& client) const {
 
 void SSDPClass::_update() {
 	if (_advertisement_target == none && _server->next()) {
-		_respondToAddr = _server->getRemoteAddress();
-		_respondToPort = _server->getRemotePort();
+		_addrForResponse = _server->getRemoteAddress();
+		_portForResponse = _server->getRemotePort();
 
 		typedef enum { METHOD, URI, PROTO, KEY, VALUE, ABORT } states;
 		states state = METHOD;
@@ -481,17 +484,19 @@ void SSDPClass::_update() {
 
 	if (_advertisement_target != none && (millis() - _process_time) > _delay) {
 		if (_advertisement_target == all) {
-			_advertise_about_all(RESPONSE);
+			_advertiseAll(RESPONSE);
 		} else {
-			_advertise_about_target(RESPONSE, _advertisement_target);
+			_advertiseTarget(RESPONSE, _advertisement_target);
 		}
 		_delay = 0;
 		_advertisement_target = none;
 	} else if (_notify_time == 0 || (millis() - _notify_time) > (_interval * 1000L)) {
+		// Send NOTIFY_ALIVE messages about all every <_interval> seconds.
 		_notify_time = millis();
-		_advertise_about_all(NOTIFY_ALIVE);
+		_advertiseAll(NOTIFY_ALIVE);
 	}
 
+	// If get new request while previous isn't answered already, ignore it.
 	if (_advertisement_target != none) {
 		while (_server->next())
 			_server->flush();
@@ -567,7 +572,7 @@ void SSDPClass::setServiceTypes(SSDPServiceType types[], uint8_t services_num) {
 	_serviceTypes = new char* [services_num];
 	for (int i = 0; i < services_num; i++) {
 		_serviceTypes[i] = new char[SSDP_SERVICE_TYPE_SIZE];
-		snprintf_P(_serviceTypes[i], SSDP_SERVICE_TYPE_SIZE, "%s:service:%s:%s",
+		snprintf(_serviceTypes[i], SSDP_SERVICE_TYPE_SIZE, "%s:service:%s:%s",
 					types[i].domain, types[i].service, types[i].version);
 	}
 	_servicesNum = services_num;
@@ -598,25 +603,27 @@ void SSDPClass::_onTimerStatic(SSDPClass* self) {
 }
 
 void SSDPClass::_deleteServiceTypes() {
-	_servicesNum = 0;
-	if (!_serviceTypes)
+	if (!_serviceTypes) {
+		_servicesNum = 0;
 		return;
+	}
 
 	for (int i = 0; i < _servicesNum; i++)
 		if (_serviceTypes[i]) {
-			_advertise_about_target(NOTIFY_BB, i);
+			_advertiseTarget(NOTIFY_BB, i);
 			delete _serviceTypes[i];
 		}
 	delete _serviceTypes;
+	_servicesNum = 0;
 }
 
 void SSDPClass::addHeader(const char* header, const char* value) {
 	if (!_sending)
 		return;
 		
-	int len = strlen_P(header) + strlen_P(value) + 5;
+	int len = strlen(header) + strlen(value) + 5;
 	char buffer[len];
-	snprintf_P(buffer, sizeof(buffer), "%s: %s\r\n", header, value);
+	snprintf(buffer, sizeof(buffer), "%s: %s\r\n", header, value);
 	_server->append(buffer, len);
 }
 

@@ -111,7 +111,7 @@ public:
 
 protected:
 	// if >= 0, it is index of service in _serviceTypes array
-	enum advertisement_target_t { none = -5, uuid, all, deviceType, rootdevice };
+	enum AdvertisementTarget { none = -5, uuid, all, deviceType, rootdevice };
 	int getAdvertisementTarget() { return _advertisement_target; };
 
 	void addHeader(const char* header, const char* value);
@@ -121,19 +121,19 @@ protected:
 	virtual void on_notify_bb() {};
 
 private:
-	typedef enum {
+	enum MessageType {
 		RESPONSE,
 		SEARCH,
 		NOTIFY_ALIVE,
 		NOTIFY_BB
-	} ssdp_message_type_t;
+	};
 
-	void _send(ssdp_message_type_t msg_type, const char* st_on_nt_val, const char* usn);
-	void _notify(const char* nt_header, const char* usn_header);
-	void _advertise_about_target(ssdp_message_type_t msg_type, int16_t target);
-	void _advertise_about_all(ssdp_message_type_t msg_type);
-	void _get_target_usn(int16_t target, const char* st_or_nt_val, char* buffer, int16_t buffer_size);
-	void _get_target_st_or_nt(int16_t target, char* buffer, int16_t buffer_size);
+	void _sendSSDPMessage(MessageType msg_type, const char* st_on_nt_val, const char* usn);
+	void _sendNotificationMessage(const char* nt_header, const char* usn_header);
+	void _advertiseTarget(MessageType msg_type, int16_t target);
+	void _advertiseAll(MessageType msg_type);
+	void _getTargetUsnHeader(int16_t target, const char* st_or_nt_val, char* buffer, int16_t buffer_size);
+	void _getTargetStOrNtHeader(int16_t target, char* buffer, int16_t buffer_size);
 	void _update();
 	void _startTimer();
 	void _stopTimer();
@@ -147,8 +147,8 @@ private:
 	uint32_t _interval = SSDP_INTERVAL_SECONDS;
 	bool _auto_mode = false;
 
-	IPAddress _respondToAddr;
-	uint16_t  _respondToPort = 0;
+	IPAddress _addrForResponse;
+	uint16_t  _portForResponse = 0;
 
 	int _advertisement_target = none;
 	unsigned short _delay = 0;
